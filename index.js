@@ -1,6 +1,5 @@
 /*
 	TODO:
-	- Prevent exploits : signin, create requests (all buttons basically)
 	- Deal with idling : 
 	https://stackoverflow.com/questions/48472977/how-to-catch-and-deal
 	-with-websocket-is-already-in-closing-or-closed-state-in
@@ -17,7 +16,7 @@ const db = mysql.createConnection({
 	host: "localhost",
 	user: "root",
 	password: "",
-	database : 'youarentemptea'
+	database : "youarentemptea"
 });
 
 db.connect(function(err) {
@@ -37,17 +36,19 @@ app.use('/client', express.static(__dirname + '/client'));
 
 server.listen(process.env.PORT || 2000);
 
-async function getToken(socket, tokenKey){
+async function getToken(socket, tokenKey, tokenType){
 	console.log('');
-	console.log('>>> Getting Token...')
-	try {
+	console.log('>>> Getting Token...');
+	console.log(`Using ${tokenType} : ${tokenKey}`);
+	try { // Use same function for authorization code and refresh token (tokenType)
 		const data = new FormData();
-		data.append('client_id', '');
-		data.append('client_secret', '');
-		data.append('grant_type', 'authorization_code');
+		data.append('client_id', '580552424369160212');
+		data.append('client_secret', 'OgcZ6EAd0LnUhRvq8NAeYtF_69RutLgw');
 		data.append('redirect_uri', 'http://localhost:2000/');
 		data.append('scope', 'identify');
-		data.append('code', tokenKey);
+		data.append(tokenType, tokenKey);
+		if(tokenType == 'code') data.append('grant_type', 'authorization_code');
+		else data.append('grant_type', 'refresh_token');
 
 		// Use data with : code from authorization redirect OR refresh token, in order to obtain token
 		const fetchtoken = await fetch('https://discordapp.com/api/oauth2/token', {method: 'POST', body: data,});
@@ -79,7 +80,7 @@ async function login(socket, token){
 		console.log('Login info response', info);
 		if(info.message == '401: Unauthorized'){
 			console.log('Expired token, refreshing...');
-			getToken(socket, token.refresh_token);
+			getToken(socket, token.refresh_token, 'refresh_token');
 		}
 		else{
 			let user = {...token, ...info}; // Package for save
@@ -87,17 +88,21 @@ async function login(socket, token){
 			// Remove unnecessary info
 			['locale', 'mfa_enabled', 'flags', 'token_type', 'expires_in', 'scope'].forEach(e => delete user[e]);
 
-			// Save to database
-			let sql = 'REPLACE INTO users SET ?';
+			// Save to database, but if already there, only update what's necessary
+			let sql = `INSERT INTO users SET ? ON DUPLICATE KEY UPDATE username='${user.username}',avatar='${user.avatar}',discriminator='${user.discriminator}',access_token='${user.access_token}',refresh_token='${user.refresh_token}'`;
 			let query = db.query(sql, user, (err, result) => {
 				if(err) throw err;
 				console.log(result);
 			});
-			// Remove more unnecessary info REEEEEEEEEE
+			// Remove more unnecessary info
+			delete user['refresh_token'];
 
-			// Send info to client, to save token to cookies
+			// Send data to client, to save token to cookies
 			console.log("Sending info pack to client...");
 			socket.emit('discord-login', user);
+
+			// Save data to client-side socket, for quick access 
+			socket.user = user;
 		}
 	} catch (error) {
 		console.log(error);
@@ -115,6 +120,7 @@ io.on('connection', function(socket){
 	console.log('');
 	console.log("New connection!", socket.id);
 
+	// Get query code and cookies from client handshake
 	const urlObj = url.parse(socket.handshake.headers.referer, true);
 	const cookie = socket.handshake.headers.cookie;
 
@@ -123,9 +129,9 @@ io.on('connection', function(socket){
 		console.log('... has code!');
 
 		const accessCode = urlObj.query.code;
-		getToken(socket, accessCode);
+		getToken(socket, accessCode, 'code');
 	}
-	else if(cookie){ // Otherwise, if returning player with cookie
+	else if(cookie){ // Otherwise, if returning socket with cookie
 		console.log('... has cookie!');
 		console.log('');
 		console.log('>>> Comparing cookie token...');
@@ -149,31 +155,46 @@ io.on('connection', function(socket){
 		});
 	}
 
-	socket.on('game-join', function(level){
-		// Check if player isn't already in a level
-		if(!Object.keys(socket.rooms)[0]){
+	socket.on('game-join-req', function(levelname, authorid){
+		// Check if socket is logged in, and isn't already in a level
+		if(socket.user && !Object.keys(socket.rooms)[0]){
 			let build = false;
-			if(!level){	// If no arguments, assume it is socket's room
-				level = socket.level;
+
+			// If no data, assume socket's room
+			if(!levelname || !authorid) {
 				build = true;
+				levelname = 'Default'; // REEEEEEEEEEEEE
+				authorid = socket.user.id;
 			}
+		
+			console.log('');
+			console.log(`>>> Displaying ${levelname} by ${authorid}...`);
+
 			// Join room corresponding to level id
-			socket.join(level.id);
+			let levelid = `${authorid}-${levelname}`;
+			socket.join(levelid);
+
+			// Access database, get map
+			let sql = `SELECT json_extract(maps, '$.${levelname}') AS map FROM users WHERE id = ${authorid}`;
+			let query = db.query(sql, (err, result) => {
+				if(err) throw err;
+
+				// If no game is ongoing in level, create it
+				if (!io.sockets.adapter.rooms[levelid].game){
+					socket.player = new Player();
+					console.log("Created Player??");
+					io.sockets.adapter.rooms[levelid].game = new Game(build,levelname,authorid,JSON.parse(JSON.parse(result[0].map)));
+					console.log("Created game??");
+				}
+			});
 
 			// Show client game view
-			socket.emit('game-show');
-
-			// If no game is ongoing in level, create it
-			if (!io.sockets.adapter.rooms[level.id].game){
-				io.sockets.adapter.rooms[level.id].game = new Game(build, level.map);
-				io.sockets.adapter.rooms[level.id].sockets.forEach(socket => {
-					socket.character = new Character();
-				});
-			}
+			socket.emit('game-show-res', build); // REEEEEEEEEEEEEE
+			
 		} else{ socket.emit('error', "There was an error joining that level.");}
 	});
 
-	socket.on('game-leave', function (){
+	socket.on('game-leave-req', function (){
 		let levelid = Object.keys(socket.rooms)[0];
 
 		// If socket is in level, leave
@@ -181,19 +202,63 @@ io.on('connection', function(socket){
 	});
 
 	socket.on('keyPress',function(data){
-		console.log('key');
 		let levelid = Object.keys(socket.rooms)[0];
-
 		// If player is in level (if !0)
 		if(levelid){
-			if(data.inputId === 'left')
-				socket.character.left = data.state;
-			else if(data.inputId === 'right')
-				socket.character.right = data.state;
-			else if(data.inputId === 'up')
-				socket.character.up = data.state;
+			// Create shortcut variables (pointers) to objects
+			let player = socket.player; // Assign by REFERENCE (pointer)
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+
+			if(data.inputId === 'left') player.left = data.state;
+			else if(data.inputId === 'right') player.right = data.state;
+			else if(data.inputId === 'up') player.up = data.state;
+			else if (data.inputId === 'interact' && data.state && !game.build){
+				let binfo = game.getBlockInfo(round_p2t(player.loc.x),round_p2t(player.loc.y));
+
+				// Place block (is the square void?)
+				if(player.holding && !binfo.id){
+					game.newBlock(round_p2t(player.loc.x),round_p2t(player.loc.y), player.holding);
+					player.holding = null;
+				}
+				// Pick up block
+				else if (!player.holding && binfo.pickup){
+					player.holding = game.getBlock(round_p2t(player.loc.x),round_p2t(player.loc.y));
+					game.newBlock(round_p2t(player.loc.x),round_p2t(player.loc.y), BLOCK_NAMES.VOID);
+				}
+				// Talk to NPC
+				else if (binfo.talk && !binfo.pickup){
+					let b = game.getBlock(round_p2t(player.loc.x),round_p2t(player.loc.y));
+					if(b.message != ""){
+						socket.emit('game-npc-talk', b.message);
+
+						// Stop player input state
+						player.left = false;
+						player.right = false;
+						player.up = false;
+						player.vel = {x:0, y:0};
+					}
+				}
+			}
+			// If socket is building a level and clicks on canvas, add block
 			else if (data.inputId === 'mouse' && io.sockets.adapter.rooms[levelid].game.build)
-				io.sockets.adapter.rooms[levelid].game.newBlock(data.state.x, data.state.y, data.block);
+				io.sockets.adapter.rooms[levelid].game.newBlock(floor_p2t(data.state.x), floor_p2t(data.state.y), data.state.b);
+		}
+	});
+
+	socket.on('game-build-save', function(){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+			// If the map is being edited
+			if(game.build){
+				// Save to database
+				let sql = `UPDATE users SET maps = json_replace(maps, '$.${game.mapname}',?) WHERE id = ${socket.user.id}`;
+				let query = db.query(sql, JSON.stringify(game.map_data), (err, result) => {
+					if(err) throw err;
+					console.log(result);
+				});
+			}
 		}
 	});
 });
@@ -212,22 +277,24 @@ setInterval(function() {
 	let currentTime = (new Date()).getTime();
 	let dt = (currentTime - lastUpdateTime)/1000;
 
-	// For each level being played, get game
+	// For each level being played, get game if it exists
 	for (let levelid in io.sockets.adapter.rooms){
-		// Initialize render pack
-		let pack = {};
+		if (io.sockets.adapter.rooms[levelid].game){
+			// Initialize render pack
+			let pack = {};
+			let room = io.sockets.adapter.rooms[levelid];
 
-		let room = io.sockets.adapter.room[levelid];
-		pack['map'] = room.game.map;
+			pack['map'] = room.game.map;
+			
+			// For each socket id in room, update and get render pack
+			for (let i in room.sockets){
+				room.game.updatePlayer(dt, io.sockets.connected[i].player);
+				pack[i] = io.sockets.connected[i].player.getRenderPack();
+			}
 
-		// For each player, update and get render pack
-		for (let i in room.sockets){
-			updatePlayer(dt,room.game,room.sockets[i]);
-			pack[i] = room.sockets[i].getRenderPack();
+			// Send render data to every player
+			io.in(levelid).emit('update', pack);
 		}
-
-		// Send render data to every player
-		io.in(id).emit('update', pack);
 	}
 	lastUpdateTime = currentTime;
 }, 1000/60);
@@ -235,72 +302,72 @@ setInterval(function() {
 //-------------------------------------------------------------------------
 // CONSTANTS AND UTILITY FUNCTIONS
 //-------------------------------------------------------------------------
+/*
+	Key vairables:
+	id       [required] - an integer that corresponds with a tile in the data array.
+	edit	 [optional] - whether a builder can move/place/remove a block
+	solid    [optional] - whether the tile is solid or not, defaults to false.
+	bounce   [optional] - how much velocity is preserved upon hitting the tile, 0.5 is half.
+	jump     [optional] - whether the player can jump while over the tile, defaults to false.
+	gravity  [optional] - gravity of the tile, must have X and Y values (e.g {x:0.5, y:0.5}).
+	oncollision [optional] - refers to a script in the scripts section, executed if it is touched.
+	
+*/
+const BLOCK_NAMES = { VOID: 0, DOOR_LEFT: 1, DOOR_RIGHT: 2, BEDROCK: 3,  PLATFORM: 4, NPC: 5, KEY: 6};
+const BLOCK_INFO = [
+	{id: BLOCK_NAMES.VOID, solid:0},
+	{id: BLOCK_NAMES.DOOR_LEFT, solid:0, oncollision: function(game,player){
+		if(game.count){
+			game.count--; 
+			game.map = game.map_data[game.count]; 
+			player.spawn("right");
+		} 
+	}},
+	{id: BLOCK_NAMES.DOOR_RIGHT, solid:0, oncollision: function(game, player){
+		if(game.count<4){
+			game.count++; 
+			game.map = game.map_data[game.count]; 
+			player.spawn("left");
+		} 
+	}},
+	{id: BLOCK_NAMES.BEDROCK, solid: 1, bounce: {x: 0,y: 0},},
+	{id: BLOCK_NAMES.PLATFORM, solid: 1, edit: 1, bounce: {x: 0,y: 0}},
+	{id: BLOCK_NAMES.NPC, solid: 0, edit: 1, talk: 1},
+	{id: BLOCK_NAMES.KEY, solid: 0, edit: 1, pickup: 1},
+];
+const SIZE = {tw: 19, th: 8};
+const TILE     = 10;
+const LIMITS = {
+	x: 40,
+	y: 160,
+};
+const SPEEDS = {
+	gravity: 3,
+	jump: 90,
+	left: 8,
+	right: 8,
+};
 
-const SIZE   = {tw: 30, th: 30};
-	TILE     = 20;
-	HEIGHT 	 = SIZE.th*TILE;
-	GRAVITY  = 9.8 * 6; // default (exagerated) gravity
-	MAXDX    = 15;      // default max horizontal speed (15 tiles per second)
-	MAXDY    = 60;      // default max vertical speed   (60 tiles per second)
-	ACCEL    = 1/3;     // default take 1/2 second to reach maxdx (horizontal acceleration)
-	FRICTION = 1/6;     // default take 1/6 second to stop from maxdx (horizontal friction)
-	IMPULSE  = 1500;    // default player jump impulse
-	BUILD_TIME = 5;     // default time allowed for build phase
-	AMOUNT_TEAMS = 2;
-	BLOCKS   = { NULL: 0, SPAWN: 1, GOAL: 2, BEDROCK: 3,  BRICK: 4, WOOD: 5 };
-	COLLIDER_BLOCKS = [BLOCKS.BEDROCK, BLOCKS.BRICK, BLOCKS.WOOD];
-	IMMUTABLE_BLOCKS = [BLOCKS.BEDROCK, BLOCKS.SPAWN, BLOCKS.GOAL];
-	PHASES = { BUILD: 0, RACE: 1, FINISH: 2};
+function t2p(t){ return t*TILE;} // tile to point
+function floor_p2t(p){ return Math.floor(p/TILE);} // point to tile, for click
+function round_p2t(p){ return Math.round(p/TILE);} // point to tile, for block drop
+function tformula(tx,ty,tw=SIZE.tw){ return tx + (ty*tw)} // tile to array index
 
-function bound(x, min, max) {
-	return Math.max(min, Math.min(max, x));
-}
-function t2p(t)     { return t*TILE;                     }; // tile to point
-function p2t(p)     { return Math.floor(p/TILE);         }; // point to tile
-function tformula(tx,ty) {return tx + (ty*SIZE.tw)       }; // tile to array index
-function pformula(x,y)   {return tformula(p2t(x),p2t(y)) }; // point to array index
-
-function tcell(map,tx,ty) {return map[tformula(tx,ty)];}; // get cell with tile from array
-
-function isSurroundingCellTraversable(map,tx,ty){
-	cell = tcell(map,tx,ty);
-	for (block of COLLIDER_BLOCKS) if(cell === block) return true;
-	return false;
-}
-
-function getRandomInt(min, max) { //min and max included
-	return Math.floor(Math.random() * (max - min + 1) ) + min;
-}
-function newMap(){
+function newMap(tw,th){
 	let map = [];
 	// SETUP MAP
-	for(let i = 0; i < SIZE.tw*SIZE.th; i++){
-		map[i] = BLOCKS.NULL;// all to 0
+	for(let i = 0; i < tw*th; i++){
+		map[i] = BLOCK_NAMES.VOID;// all to 0
 	}
 	  // Walls
-	for(let i = 0; i< SIZE.th*SIZE.tw; i+=SIZE.tw){
-		map[i] = BLOCKS.BEDROCK; // vertical
-		map[SIZE.tw+i-1] = BLOCKS.BEDROCK;
+	for(let i = 0; i< th*tw; i+=tw){
+		map[i] = BLOCK_NAMES.BEDROCK; // vertical
+		map[tw+i-1] = BLOCK_NAMES.BEDROCK;
 	}
-	for(let i = 0; i < SIZE.tw; i++){
-		map[i] = BLOCKS.BEDROCK; // horizontal
-		map[SIZE.tw*(SIZE.th-1)+i] = BLOCKS.BEDROCK;
+	for(let i = 0; i < tw; i++){
+		map[i] = BLOCK_NAMES.BEDROCK; // horizontal
+		map[tw*(th-1)+i] = BLOCK_NAMES.BEDROCK;
 	}
-	  // Spawn
-	map[tformula(1,SIZE.th-3)] = BLOCKS.SPAWN;
-	map[tformula(1,SIZE.th-2)] = BLOCKS.SPAWN;
-	map[tformula(2,SIZE.th-3)] = BLOCKS.SPAWN;
-	map[tformula(2,SIZE.th-2)] = BLOCKS.SPAWN;
-	  // Goal
-	let randX = getRandomInt(1, SIZE.tw-2);
-	let randY = getRandomInt(2, SIZE.th-2);
-	while(map[tformula(randX,randY)]){ // while possible goal locations are already occupied
-		randX = getRandomInt(1, SIZE.tw-2);
-		randY = getRandomInt(2, SIZE.th-2);
-	}
-	map[tformula(randX,randY)] = BLOCKS.GOAL;
-	map[tformula(randX,randY-1)] = BLOCKS.GOAL;
-
 	return map;
 }
 
@@ -322,166 +389,149 @@ function getCookie(source, cname) {
 // UPDATE FUNCTION & OBJECTS
 //-------------------------------------------------------------------------
 
-// Update player function, all collision is done using the top left corner 
-// of the player box. Function is not a player object method because I don't want to pass in every
-// value from the game object seperately ; or use game functions in that obj.
-function updatePlayer(dt,game,player){
-	let map = game.map;
-	
-	// Get player movement status
-	let wasleft = player.dx  < 0, 
-	wasright    = player.dx  > 0,
-	friction    = player.friction,
-	accel       = player.accel;
-
-	// Update acceleration and player input
-	player.ddx = 0;
-	player.ddy = player.gravity;
-	if (player.left)
-		player.ddx = player.ddx - accel;
-	else if (wasleft)
-		player.ddx = player.ddx + friction;
-	if (player.right)
-		player.ddx = player.ddx + accel;
-	else if (wasright)
-		player.ddx = player.ddx - friction;
-	if (player.up && !player.jumping && !player.falling) {
-		player.ddy = player.ddy - player.impulse; // an instant big force impulse
-		player.jumping = true;
-	}
-	
-	// Update X position and velocity
-	player.x  = player.x  + (dt * player.dx);
-	player.dx = bound(player.dx + (dt * player.ddx), -player.maxdx, player.maxdx);
-	if ((wasleft  && (player.dx > 0)) || (wasright && (player.dx < 0))) 
-		player.dx = 0; // clamp at zero to prevent friction from making us jiggle side to side
-
-		// Collision variables #1
-	let tx = p2t(player.x); // player tile position
-	let ty = p2t(player.y);
-	let nx = player.x%TILE; // overlap on tile (remainder)
-	let ny = player.y%TILE; // y overlap on grid
-	let blockhere = isSurroundingCellTraversable(map,tx,ty) // Get surrounding cells around player
-	let blockright = isSurroundingCellTraversable(map,tx+1,ty);
-	let blockbelow = isSurroundingCellTraversable(map,tx,ty+1);
-	let blockbelow_right = isSurroundingCellTraversable(map,tx+1,ty+1);
-
-		// Check for X collision
-	if (player.dx > 0) { // moving right 
-		if ((blockright && !blockhere) || (blockbelow_right  && !blockbelow && ny)) {
-			player.x  = t2p(tx);
-			player.dx = 0;
-		}
-	}
-	else if (player.dx < 0) { // moving left
-		if ((blockhere     && !blockright) ||
-			(blockbelow && !blockbelow_right && ny)) {
-			player.x  = t2p(tx + 1);
-			player.dx = 0;
-		}
-	}
-
-	// Update Y position and velocity
-	player.y  = player.y  + (dt * player.dy);
-	player.dy = bound(player.dy + (dt * player.ddy), -player.maxdy, player.maxdy);
-
-		// Collision variables #2
-	tx = p2t(player.x); // p tile position
-	ty = p2t(player.y);
-	nx = player.x%TILE; // overlap on tile (remainder)
-	ny = player.y%TILE; // y overlap on grid
-	blockhere = isSurroundingCellTraversable(map,tx,ty);
-	blockright = isSurroundingCellTraversable(map,tx+1,ty);
-	blockbelow = isSurroundingCellTraversable(map, tx,ty+1);
-	blockbelow_right = isSurroundingCellTraversable(map, tx+1,ty+1);
-
-		// Check for Y collision
-	if (player.dy > 0) { // falling
-		if ((blockbelow && !blockhere) || (blockbelow_right && !blockright && nx)) {
-			player.y = t2p(ty);
-			player.dy = 0;
-			player.falling = false;
-			player.jumping = false;
-			ny = 0;
-		}
-	}
-	else if (player.dy < 0) { // jumping
-		if ((blockhere && !blockbelow) || (blockright && !blockbelow_right && nx)) {
-			player.y  = t2p(ty + 1);
-			player.dy = 0;
-			ny   = 0;
-		}
-	}
-
-	// Collision variables #3
-	tx = p2t(player.x);
-	ty = p2t(player.y);
-	nx = player.x%TILE;
-	ny = player.x%TILE;
-	finishhere = (tcell(map,tx,ty) === BLOCKS.GOAL);
-	finishright = (tcell(map,tx+1,ty) === BLOCKS.GOAL);
-	finishbelow = (tcell(map,tx+1,ty+1) === BLOCKS.GOAL);
-
-		// Check for special block collision
-	// if (finishhere || (finishright && nx) || (finishbelow && ny)){ // check for goal
-	// 	if (gameState == GAMESTATES.RACE){
-	// 		gameState = GAMESTATES.FINISH;
-	// 		finishTime = timer;
-	// 		clearTimer();
-	// 		return;
-	// 	}
-	// }
-
-	player.falling = ! (blockbelow || (nx && blockbelow_right)); // update falling status
-}
-
 // Game object holds information about instance of level : author, map, settings
-function Game(build,map){
+function Game(build,name,authorid,map){
 	this.build = build;
-	this.map = map || newMap();
-	this.newBlock = function(x,y){
-		let cell = tcell(map,p2t(x),p2t(y));
-	
+	this.mapname = name;
+	this.authorid = authorid;
+	this.map_data = map;
+	this.count = 0;
+	this.map = this.map_data[this.count]; // Pointer to current room of map (editing this edits data)
+	this.secret = [null, null, null, null];
+
+	this.getBlock = function (tx,ty) {return this.map[tformula(tx,ty)];}
+	this.getBlockInfo = function(tx,ty){
+		let t = this.getBlock(tx,ty);
+		if (typeof t === 'object' && t !== null) return BLOCK_INFO[t.id];
+		return BLOCK_INFO[t];
+	}
+
+	this.newBlock = function(x,y,b){
+		let tile = this.getBlockInfo(x,y);
+		
 		// If no block there, add block
-		if (cell == BLOCKS.NULL)
-			this.map[pformula(x,y)] = BLOCKS.BRICK;
-	
+		if (!tile.id) this.map[tformula(x,y)] = b;
+		
 		// Otherwise check if deletable, then delete it
-		else if (!IMMUTABLE_BLOCKS.includes(cell)) this.map[pformula(x,y)] = BLOCKS.NULL;
+		else if (tile.edit) this.map[tformula(x,y)] = BLOCK_NAMES.VOID;
+	}
+
+	this.updatePlayer = function (dt, player){
+		if (player.left && player.vel.x > -LIMITS.x) player.vel.x -= SPEEDS.left;
+		if (player.up && player.can_jump && player.vel.y > -LIMITS.y) player.vel.y -= SPEEDS.jump;
+		if (player.right && player.vel.x < LIMITS.x) player.vel.x += SPEEDS.left;
+
+		let tX = player.loc.x + dt*player.vel.x;
+		let tY = player.loc.y + dt*player.vel.y;
+
+		let offset = Math.round((TILE / 2) - 1);
+
+		let tile = this.getBlockInfo(Math.round(player.loc.x / TILE),Math.round(player.loc.y / TILE));
+		
+		if(tile.gravity){
+			player.vel.x += tile.gravity.x;
+			player.vel.y += tile.gravity.y;
+		} else {
+			player.vel.y += SPEEDS.gravity;
+		}
+
+		let t_y_up   = Math.floor(tY / TILE);
+		let t_y_down = Math.ceil(tY / TILE);
+		let y_near1  = Math.round((player.loc.y - offset) / TILE);
+		let y_near2  = Math.round((player.loc.y + offset) / TILE);
+
+		let t_x_left  = Math.floor(tX / TILE);
+		let t_x_right = Math.ceil(tX / TILE);
+		let x_near1   = Math.round((player.loc.x - offset) / TILE);
+		let x_near2   = Math.round((player.loc.x + offset) / TILE);
+
+		let top1    = this.getBlockInfo(x_near1, t_y_up);
+		let top2    = this.getBlockInfo(x_near2, t_y_up);
+		let bottom1 = this.getBlockInfo(x_near1, t_y_down);
+		let bottom2 = this.getBlockInfo(x_near2, t_y_down);
+		let left1   = this.getBlockInfo(t_x_left, y_near1);
+		let left2   = this.getBlockInfo(t_x_left, y_near2);
+		let right1  = this.getBlockInfo(t_x_right, y_near1);
+		let right2  = this.getBlockInfo(t_x_right, y_near2);
+
+		player.vel.x = Math.min(Math.max(player.vel.x, -LIMITS.x), LIMITS.x);
+		player.vel.y = Math.min(Math.max(player.vel.y, -LIMITS.y), LIMITS.y);
+		
+		player.loc.x += dt*player.vel.x;
+		player.loc.y += dt*player.vel.y;
+		
+		player.vel.x *= .83;
+		
+		if (left1.solid || left2.solid || right1.solid || right2.solid) {
+			// Resolve collision
+			while (this.getBlockInfo(Math.floor(player.loc.x / TILE), y_near1).solid 
+			|| this.getBlockInfo(Math.floor(player.loc.x / TILE), y_near2).solid){
+				player.loc.x += 0.1;
+			}
+
+			while (this.getBlockInfo(Math.ceil(player.loc.x / TILE), y_near1).solid
+				|| this.getBlockInfo(Math.ceil(player.loc.x / TILE), y_near2).solid)
+				player.loc.x -= 0.1;
+				
+			// tile bounce
+			var bounce = 0;
+			if (left1.solid && left1.bounce.x > bounce) bounce = left1.bounce.x;
+			if (left2.solid && left2.bounce.x > bounce) bounce = left2.bounce.x;
+			if (right1.solid && right1.bounce.x > bounce) bounce = right1.bounce.x;
+			if (right2.solid && right2.bounce.x > bounce) bounce = right2.bounce.x;
+
+			player.vel.x *= -bounce || 0;
+		}
+		
+		if (top1.solid || top2.solid || bottom1.solid || bottom2.solid) {
+			// Resolve collision
+			while (this.getBlockInfo(x_near1, Math.floor(player.loc.y / TILE)).solid 
+			|| this.getBlockInfo(x_near2, Math.floor(player.loc.y / TILE)).solid)
+				player.loc.y += 0.1;
+
+			while (this.getBlockInfo(x_near1, Math.ceil(player.loc.y / TILE)).solid 
+			|| this.getBlockInfo(x_near2, Math.ceil(player.loc.y / TILE)).solid)
+				player.loc.y -= 0.1;
+				
+			// tile bounce
+			var bounce = 0;
+			if (top1.solid && top1.bounce.y > bounce) bounce = top1.bounce.y;
+			if (top2.solid && top2.bounce.y > bounce) bounce = top2.bounce.y;
+			if (bottom1.solid && bottom1.bounce.y > bounce) bounce = bottom1.bounce.y;
+			if (bottom2.solid && bottom2.bounce.y > bounce) bounce = bottom2.bounce.y;
+			
+			player.vel.y *= -bounce || 0;
+		}
+
+		// Resolve jumping
+		if ((bottom1.solid || bottom2.solid) && !tile.jump) player.can_jump = true;
+		else player.can_jump = false;
+
+		// On collision, call event associated to block
+		if(player.last_tile != tile.id && tile.oncollision) tile.oncollision(this, player);
+
+		player.last_tile = tile.id;
 	}
 }
 
-// Character object holds player postion and movement information
-function Character(){
-	this.start    = { x: TILE, y: HEIGHT-2*TILE};
-	this.x        = this.start.x;
-	this.y        = this.start.y;
-	this.dx       = 0;
-	this.dy       = 0;
-	this.ddx      = 0;
-	this.ddy      = 0;
-	this.gravity  = TILE * GRAVITY;
-	this.maxdx    = TILE * MAXDX;
-	this.maxdy    = TILE * MAXDY;
-	this.impulse  = TILE * IMPULSE;
-	this.accel    = this.maxdx / ACCEL;
-	this.friction = this.maxdx / FRICTION;
+// Player object holds player postion and movement information
+function Player(){
+	this.loc = {x: (SIZE.tw-8)*TILE, y: (SIZE.th-2)*TILE};
+	this.vel    = { x: 0, y: 0};
 	this.left     = false;
 	this.right    = false;
 	this.up       = false;
-	this.jumping  = false;
-	this.falling  = false;
+	this.can_jump = true;
+	this.jump_switch = 0;
+	this.last_tile = null;
+	this.holding = null;
 
 	this.getRenderPack = function(){
-		return {
-			x: this.x,
-			y: this.y,
-		};
+		return {...this.loc, 'holding': this.holding};
 	}
 
-	this.reset = function(){
-		this.x = this.start.x;
-		this.y = this.start.y;
-		this.dx = this.dy = 0;
+	this.spawn = function(side){
+		if (side === "right") this.loc = { x: (SIZE.tw-2)*TILE, y: (SIZE.th-2)*TILE};
+		else if (side === "left") this.loc = { x: TILE, y: (SIZE.th-2)*TILE};
 	}
 }

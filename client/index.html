@@ -1,39 +1,62 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="overflow-hidden">
 <head>
 	<!-- Meta tags -->
 	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 	<meta http-equiv="X-UA-Compatible" content="ie=edge">
 
 	<!-- Bootstrap CSS -->
 	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
 	
+	<!-- Custom CSS -->
+	<style>
+		#game-canvas{
+			max-height:75vh;
+			width: 100%;
+		}
+		.block{
+			height: 10px;
+			width: 10px;
+		}
+	</style>
+	<!-- Font Awesome Icons -->
+	<script src="https://kit.fontawesome.com/6284778953.js"></script>
+
 	<title>You aren't Emp-tea!</title>
 </head>
-<body class="vh-100">
-	<div id="menu-button" class="dropdown position-absolute mt-1 ml-1">
-		<button class="btn btn-secondary dropdown-toggle" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-			AYYAYA
+<body class="vh-100 overflow-hidden" style="background-color: gray">
+	<div id="menu-button" class="dropdown position-absolute mt-1 ml-1" style="z-index: 1">
+		<button class="btn btn-secondary px-1" style="border-radius:50%;" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+			<i class="fas fa-cog fa-lg mx-1"></i>
 		</button>
 		<div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-			<a class="dropdown-item" id="menu-button-login" href="https://discordapp.com/api/oauth2/authorize?client_id=580552424369160212&redirect_uri=http%3A%2F%2Flocalhost%3A2000%2F&response_type=code&scope=identify">Login to Discord</a>
+			<a class="dropdown-item" id="menu-button-login" href="https://discordapp.com/api/oauth2/authorize?client_id=580552424369160212&redirect_uri=http%3A%2F%2Flocalhost%3A2000%2F&response_type=code&scope=identify" disabled>Login to Discord</a>
 			<a class="dropdown-item" id="menu-button-settings">Settings</a>
 			<a class="dropdown-item" id="menu-button-main">Return to main menu</a>
 		</div>
 	</div>
 	<div id="main-menu" class="h-100 row justify-content-center align-items-center" style="background-color:rgb(109, 209, 255);">
-		<img class="column w-50" src="/client/cat.jpg">
-		<div class="column">
-			<button type="button" id="main-menu-btn-room" class="d-flex row m-4 btn btn-primary btn-lg">YOUR TEA ROOM</button>
-			<button type="button" id="main-menu-btn-search" class="d-flex row m-4 btn btn-primary btn-lg">FIND A TEA ROOM</button>
-			<button type="button" id="main-menu-btn-settings" class="d-flex row m-4 btn btn-primary btn-lg">SETTINGS</button>
+		<img class="col-7" src="/client/cat.jpg">
+		<div class="col-4">
+			<button type="button" id="main-menu-btn-room" class="d-flex m-4 btn btn-primary btn-lg">YOUR TEA ROOM</button>
+			<button type="button" id="main-menu-btn-search" class="d-flex m-4 btn btn-primary btn-lg">FIND A TEA ROOM</button>
+			<button type="button" id="main-menu-btn-settings" class="d-flex m-4 btn btn-primary btn-lg">SETTINGS</button>
 		</div>
 	</div>
-	<div id="game" class="h-100 d-none">
-		<canvas id="game-canvas" style="border:1px solid #000000; overflow:hidden;"></canvas>
-		<div id="game-ui">
-			<div id="game-ui-build-panel"></div>
+	<div id="game" class="h-100 d-none d-flex flex-column">
+		<canvas id="game-canvas" class="m-auto"></canvas>
+		<div id="game-ui" class="flex-grow-1" style="background-color: blue;">
+			<div id="game-ui-build" >
+				<button type="button" id="game-ui-build-btn-save" class="btn btn-primary " style="bottom: 10px;">SAVE</button>
+				<div id="game-ui-build-panel" class="row">
+					<div id="game-ui-build-blocks" class="col"></div>
+					<div class="col">
+						<input id="game-ui-build-message" type="text" class="d-none my-3">
+						<select id="game-ui-build-types" class="d-none"></select>
+					</div>
+				</div>
+			</div>
 		</div>
 	</div>
 
