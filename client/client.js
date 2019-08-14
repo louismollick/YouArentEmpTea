@@ -59,6 +59,12 @@
         else document.getElementById('game-ui-build').classList.add('d-none');
     });
 
+    socket.on('game-leave-res', function(){
+        // Hide game canvas and show main menu
+        document.getElementById('main-menu').classList.remove('d-none');
+        document.getElementById('game').classList.add('d-none');
+    });
+
     socket.on('update', function(pack){
         render(ctx, pack);
     });
@@ -203,7 +209,7 @@
                     ctx.fillRect(pack[i].x, pack[i].y-TILE/2, TILE/2, TILE/2);
                 }
                 ctx.fillStyle = 'pink';
-                ctx.fillRect(pack[i].x, pack[i].y, TILE, TILE);
+                ctx.fillRect(pack[i].x, pack[i].y, pack[i].w, pack[i].h);
             }
         }
     }
