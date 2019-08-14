@@ -43,7 +43,7 @@ async function getToken(socket, tokenKey, tokenType){
 	try { // Use same function for authorization code and refresh token (tokenType)
 		const data = new FormData();
 		data.append('client_id', '580552424369160212');
-		data.append('client_secret', 'OgcZ6EAd0LnUhRvq8NAeYtF_69RutLgw');
+		data.append('client_secret', '');
 		data.append('redirect_uri', 'http://localhost:2000/');
 		data.append('scope', 'identify');
 		data.append(tokenType, tokenKey);
@@ -198,7 +198,11 @@ io.on('connection', function(socket){
 		let levelid = Object.keys(socket.rooms)[0];
 
 		// If socket is in level, leave
-		if(levelid) socket.leave(levelid);
+		if(levelid){
+			socket.leave(levelid);
+			socket.player = null; // Delete player object
+			socket.emit('game-leave-res'); // Show main menu
+		}
 	});
 
 	socket.on('keyPress',function(data){
@@ -212,7 +216,7 @@ io.on('connection', function(socket){
 			if(data.inputId === 'left') player.left = data.state;
 			else if(data.inputId === 'right') player.right = data.state;
 			else if(data.inputId === 'up') player.up = data.state;
-			else if (data.inputId === 'interact' && data.state && !game.build){
+			else if (data.inputId === 'interact' && data.state /*&& !game.build*/){
 				let binfo = game.getBlockInfo(round_p2t(player.loc.x),round_p2t(player.loc.y));
 
 				// Place block (is the square void?)
@@ -240,8 +244,8 @@ io.on('connection', function(socket){
 				}
 			}
 			// If socket is building a level and clicks on canvas, add block
-			else if (data.inputId === 'mouse' && io.sockets.adapter.rooms[levelid].game.build)
-				io.sockets.adapter.rooms[levelid].game.newBlock(floor_p2t(data.state.x), floor_p2t(data.state.y), data.state.b);
+			else if (data.inputId === 'mouse' && game.build)
+				game.newBlock(floor_p2t(data.state.x), floor_p2t(data.state.y), data.state.b);
 		}
 	});
 
@@ -417,106 +421,103 @@ function Game(build,name,authorid,map){
 	}
 
 	this.updatePlayer = function (dt, player){
+		// Update velocity from player input
 		if (player.left && player.vel.x > -LIMITS.x) player.vel.x -= SPEEDS.left;
 		if (player.up && player.can_jump && player.vel.y > -LIMITS.y) player.vel.y -= SPEEDS.jump;
 		if (player.right && player.vel.x < LIMITS.x) player.vel.x += SPEEDS.left;
-
-		let tX = player.loc.x + dt*player.vel.x;
-		let tY = player.loc.y + dt*player.vel.y;
-
-		let offset = Math.round((TILE / 2) - 1);
-
-		let tile = this.getBlockInfo(Math.round(player.loc.x / TILE),Math.round(player.loc.y / TILE));
 		
-		if(tile.gravity){
-			player.vel.x += tile.gravity.x;
-			player.vel.y += tile.gravity.y;
-		} else {
-			player.vel.y += SPEEDS.gravity;
-		}
+		// Update player movement 
+		player.vel.y += SPEEDS.gravity; // gravity
+		player.vel.x *= .83; // friction
 
-		let t_y_up   = Math.floor(tY / TILE);
-		let t_y_down = Math.ceil(tY / TILE);
-		let y_near1  = Math.round((player.loc.y - offset) / TILE);
-		let y_near2  = Math.round((player.loc.y + offset) / TILE);
-
-		let t_x_left  = Math.floor(tX / TILE);
-		let t_x_right = Math.ceil(tX / TILE);
-		let x_near1   = Math.round((player.loc.x - offset) / TILE);
-		let x_near2   = Math.round((player.loc.x + offset) / TILE);
-
-		let top1    = this.getBlockInfo(x_near1, t_y_up);
-		let top2    = this.getBlockInfo(x_near2, t_y_up);
-		let bottom1 = this.getBlockInfo(x_near1, t_y_down);
-		let bottom2 = this.getBlockInfo(x_near2, t_y_down);
-		let left1   = this.getBlockInfo(t_x_left, y_near1);
-		let left2   = this.getBlockInfo(t_x_left, y_near2);
-		let right1  = this.getBlockInfo(t_x_right, y_near1);
-		let right2  = this.getBlockInfo(t_x_right, y_near2);
-
-		player.vel.x = Math.min(Math.max(player.vel.x, -LIMITS.x), LIMITS.x);
+		player.vel.x = Math.min(Math.max(player.vel.x, -LIMITS.x), LIMITS.x); // Cap velocities
 		player.vel.y = Math.min(Math.max(player.vel.y, -LIMITS.y), LIMITS.y);
-		
-		player.loc.x += dt*player.vel.x;
+
+		player.loc.x += dt*player.vel.x; // Update location
 		player.loc.y += dt*player.vel.y;
-		
-		player.vel.x *= .83;
-		
-		if (left1.solid || left2.solid || right1.solid || right2.solid) {
-			// Resolve collision
-			while (this.getBlockInfo(Math.floor(player.loc.x / TILE), y_near1).solid 
-			|| this.getBlockInfo(Math.floor(player.loc.x / TILE), y_near2).solid){
+
+		// Get tile locations of all probe points on player object
+		let left = Math.floor((player.loc.x)/TILE);
+		let leftYcol = Math.floor((player.loc.x + player.size.w/4)/TILE);
+		let right = Math.floor((player.loc.x + player.size.w)/TILE);
+		let rightYcol = Math.floor((player.loc.x + player.size.w*3/4)/TILE);
+		let up = Math.floor((player.loc.y)/TILE);
+		let upXcol = Math.floor((player.loc.y + player.size.h/4)/TILE);
+		let down = Math.floor((player.loc.y + player.size.h)/TILE);
+		let downXcol = Math.floor((player.loc.y + player.size.h*3/4)/TILE);
+
+		// Get block type of each block touching a probe point (see diagram in readme)
+		let bTopLeft    = this.getBlockInfo(leftYcol, up);
+		let bTopRight   = this.getBlockInfo(rightYcol, up);
+		let bDownLeft = this.getBlockInfo(leftYcol, down);
+		let bDownRight = this.getBlockInfo(rightYcol, down);
+		let bLeftUp   = this.getBlockInfo(left, upXcol);
+		let bLeftDown   = this.getBlockInfo(left, downXcol);
+		let bRightUp  = this.getBlockInfo(right, upXcol);
+		let bRightDown  = this.getBlockInfo(right, downXcol);
+
+		// Save variables for later
+		let floorleft = bDownLeft;
+		let floorright = bDownRight;
+
+		if (bLeftUp.solid || bLeftDown.solid || bRightUp.solid || bRightDown.solid) {
+			// Resolve X collision
+			while (bLeftUp.solid || bLeftDown.solid){
 				player.loc.x += 0.1;
+				left = Math.floor(player.loc.x/TILE);
+				bLeftUp = this.getBlockInfo(left, upXcol);
+				bLeftDown = this.getBlockInfo(left, downXcol);
 			}
 
-			while (this.getBlockInfo(Math.ceil(player.loc.x / TILE), y_near1).solid
-				|| this.getBlockInfo(Math.ceil(player.loc.x / TILE), y_near2).solid)
+			while (bRightUp.solid || bRightDown.solid){
 				player.loc.x -= 0.1;
-				
-			// tile bounce
-			var bounce = 0;
-			if (left1.solid && left1.bounce.x > bounce) bounce = left1.bounce.x;
-			if (left2.solid && left2.bounce.x > bounce) bounce = left2.bounce.x;
-			if (right1.solid && right1.bounce.x > bounce) bounce = right1.bounce.x;
-			if (right2.solid && right2.bounce.x > bounce) bounce = right2.bounce.x;
+				right = Math.floor((player.loc.x+player.size.w)/TILE);
+				bRightUp  = this.getBlockInfo(right, upXcol);
+				bRightDown  = this.getBlockInfo(right, downXcol);
+			}
 
-			player.vel.x *= -bounce || 0;
+			leftYcol = Math.floor((player.loc.x + player.size.w/4)/TILE);
+			rightYcol = Math.floor((player.loc.x + player.size.w*3/4)/TILE);
+
+			player.vel.x = 0;
 		}
 		
-		if (top1.solid || top2.solid || bottom1.solid || bottom2.solid) {
-			// Resolve collision
-			while (this.getBlockInfo(x_near1, Math.floor(player.loc.y / TILE)).solid 
-			|| this.getBlockInfo(x_near2, Math.floor(player.loc.y / TILE)).solid)
+		if (bTopLeft.solid || bTopRight.solid || bDownLeft.solid || bDownRight.solid) {
+			// Resolve Y collision
+			while (bTopLeft.solid || bTopRight.solid){
 				player.loc.y += 0.1;
+				up = Math.floor((player.loc.y)/TILE);
+				bTopLeft    = this.getBlockInfo(leftYcol, up);
+				bTopRight   = this.getBlockInfo(rightYcol, up);
+			}
 
-			while (this.getBlockInfo(x_near1, Math.ceil(player.loc.y / TILE)).solid 
-			|| this.getBlockInfo(x_near2, Math.ceil(player.loc.y / TILE)).solid)
+			while (bDownLeft.solid || bDownRight.solid){
 				player.loc.y -= 0.1;
-				
-			// tile bounce
-			var bounce = 0;
-			if (top1.solid && top1.bounce.y > bounce) bounce = top1.bounce.y;
-			if (top2.solid && top2.bounce.y > bounce) bounce = top2.bounce.y;
-			if (bottom1.solid && bottom1.bounce.y > bounce) bounce = bottom1.bounce.y;
-			if (bottom2.solid && bottom2.bounce.y > bounce) bounce = bottom2.bounce.y;
-			
-			player.vel.y *= -bounce || 0;
+				down = Math.floor((player.loc.y+player.size.h)/TILE);
+				bDownLeft = this.getBlockInfo(leftYcol, down);
+				bDownRight = this.getBlockInfo(rightYcol, down);
+			}
+
+			player.vel.y = 0;
 		}
 
+		let bCenter = this.getBlockInfo(Math.round(player.loc.x / TILE),Math.round(player.loc.y / TILE));
+
 		// Resolve jumping
-		if ((bottom1.solid || bottom2.solid) && !tile.jump) player.can_jump = true;
+		if (floorleft.solid || floorright.solid) player.can_jump = true;
 		else player.can_jump = false;
 
 		// On collision, call event associated to block
-		if(player.last_tile != tile.id && tile.oncollision) tile.oncollision(this, player);
+		if(player.last_tile != bCenter.id && bCenter.oncollision) bCenter.oncollision(this, player);
 
-		player.last_tile = tile.id;
+		player.last_tile = bCenter.id;
 	}
 }
 
 // Player object holds player postion and movement information
 function Player(){
-	this.loc = {x: (SIZE.tw-8)*TILE, y: (SIZE.th-2)*TILE};
+	this.size = {w: TILE/2, h: TILE};
+	this.loc = {x: (SIZE.tw-8)*TILE, y: (SIZE.th-2)*TILE-1};
 	this.vel    = { x: 0, y: 0};
 	this.left     = false;
 	this.right    = false;
@@ -527,7 +528,7 @@ function Player(){
 	this.holding = null;
 
 	this.getRenderPack = function(){
-		return {...this.loc, 'holding': this.holding};
+		return {...this.loc, ...this.size, 'holding': this.holding};
 	}
 
 	this.spawn = function(side){
