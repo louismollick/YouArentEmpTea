@@ -183,6 +183,7 @@ io.on('connection', function(socket){
 				if (!io.sockets.adapter.rooms[levelid].game){
 					socket.player = new Player();
 					console.log("Created Player??");
+					console.log(result);
 					io.sockets.adapter.rooms[levelid].game = new Game(build,levelname,authorid,JSON.parse(JSON.parse(result[0].map)));
 					console.log("Created game??");
 				}
@@ -194,14 +195,13 @@ io.on('connection', function(socket){
 		} else{ socket.emit('error', "There was an error joining that level.");}
 	});
 
-	socket.on('game-leave-req', function (){
+	socket.on('game-leave', function (){
 		let levelid = Object.keys(socket.rooms)[0];
 
 		// If socket is in level, leave
 		if(levelid){
 			socket.leave(levelid);
 			socket.player = null; // Delete player object
-			socket.emit('game-leave-res'); // Show main menu
 		}
 	});
 
@@ -287,7 +287,7 @@ setInterval(function() {
 			// Initialize render pack
 			let pack = {};
 			let room = io.sockets.adapter.rooms[levelid];
-
+			
 			pack['map'] = room.game.map;
 			
 			// For each socket id in room, update and get render pack
@@ -317,28 +317,16 @@ setInterval(function() {
 	oncollision [optional] - refers to a script in the scripts section, executed if it is touched.
 	
 */
-const BLOCK_NAMES = { VOID: 0, DOOR_LEFT: 1, DOOR_RIGHT: 2, BEDROCK: 3,  PLATFORM: 4, NPC: 5, KEY: 6};
+const BLOCK_NAMES = { VOID: 0, DOOR: 1, BEDROCK: 2,  PLATFORM: 3, NPC: 4, KEY: 5};
 const BLOCK_INFO = [
 	{id: BLOCK_NAMES.VOID, solid:0},
-	{id: BLOCK_NAMES.DOOR_LEFT, solid:0, oncollision: function(game,player){
-		if(game.count){
-			game.count--; 
-			game.map = game.map_data[game.count]; 
-			player.spawn("right");
-		} 
-	}},
-	{id: BLOCK_NAMES.DOOR_RIGHT, solid:0, oncollision: function(game, player){
-		if(game.count<4){
-			game.count++; 
-			game.map = game.map_data[game.count]; 
-			player.spawn("left");
-		} 
-	}},
+	{id: BLOCK_NAMES.DOOR, solid:0},
 	{id: BLOCK_NAMES.BEDROCK, solid: 1, bounce: {x: 0,y: 0},},
 	{id: BLOCK_NAMES.PLATFORM, solid: 1, edit: 1, bounce: {x: 0,y: 0}},
 	{id: BLOCK_NAMES.NPC, solid: 0, edit: 1, talk: 1},
 	{id: BLOCK_NAMES.KEY, solid: 0, edit: 1, pickup: 1},
 ];
+const BLANK_ROOM0 = [ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 ];
 const SIZE = {tw: 19, th: 8};
 const TILE     = 10;
 const LIMITS = {
@@ -400,8 +388,12 @@ function Game(build,name,authorid,map){
 	this.authorid = authorid;
 	this.map_data = map;
 	this.count = 0;
-	this.map = this.map_data[this.count]; // Pointer to current room of map (editing this edits data)
 	this.secret = [null, null, null, null];
+	this.win = false;
+
+	// Pointer to current room of map (editing this edits data). First room is blank, until player wins
+	if(!this.build) this.map = BLANK_ROOM0;
+	else this.map = this.map_data[this.count]; 
 
 	this.getBlock = function (tx,ty) {return this.map[tformula(tx,ty)];}
 	this.getBlockInfo = function(tx,ty){
@@ -409,7 +401,6 @@ function Game(build,name,authorid,map){
 		if (typeof t === 'object' && t !== null) return BLOCK_INFO[t.id];
 		return BLOCK_INFO[t];
 	}
-
 	this.newBlock = function(x,y,b){
 		let tile = this.getBlockInfo(x,y);
 		
@@ -418,6 +409,18 @@ function Game(build,name,authorid,map){
 		
 		// Otherwise check if deletable, then delete it
 		else if (tile.edit) this.map[tformula(x,y)] = BLOCK_NAMES.VOID;
+	}
+
+	this.roomChange = function(player, dir){
+		// Get direction, change room count
+		if(dir == "left" && this.count) this.count--; 
+		else if(dir == "right" && this.count<4) this.count++;
+
+		// Update current map from map data -- if player hasnt won, make first room empty
+		if(this.count == 0 && !(this.build || this.win)) this.map = BLANK_ROOM0;
+		else this.map = this.map_data[this.count];
+
+		player.spawn(dir); // Respawn character at door entrance
 	}
 
 	this.updatePlayer = function (dt, player){
@@ -490,34 +493,34 @@ function Game(build,name,authorid,map){
 				bTopLeft    = this.getBlockInfo(leftYcol, up);
 				bTopRight   = this.getBlockInfo(rightYcol, up);
 			}
-
 			while (bDownLeft.solid || bDownRight.solid){
 				player.loc.y -= 0.1;
 				down = Math.floor((player.loc.y+player.size.h)/TILE);
 				bDownLeft = this.getBlockInfo(leftYcol, down);
 				bDownRight = this.getBlockInfo(rightYcol, down);
 			}
-
 			player.vel.y = 0;
 		}
-
-		let bCenter = this.getBlockInfo(Math.round(player.loc.x / TILE),Math.round(player.loc.y / TILE));
 
 		// Resolve jumping
 		if (floorleft.solid || floorright.solid) player.can_jump = true;
 		else player.can_jump = false;
 
-		// On collision, call event associated to block
-		if(player.last_tile != bCenter.id && bCenter.oncollision) bCenter.oncollision(this, player);
-
-		player.last_tile = bCenter.id;
+		// On collision, assume it's a door REEEEEEE
+		if((bLeftDown.id == BLOCK_NAMES.DOOR || bRightDown.id == BLOCK_NAMES.DOOR) 
+			&& player.last_tile != BLOCK_NAMES.DOOR){
+			if(bLeftDown.id == BLOCK_NAMES.DOOR) this.roomChange(player,"left");
+			else if (bRightDown.id == BLOCK_NAMES.DOOR) this.roomChange(player,"right");
+			player.last_tile = BLOCK_NAMES.DOOR;
+		}
+		else player.last_tile = BLOCK_NAMES.VOID;
 	}
 }
 
 // Player object holds player postion and movement information
 function Player(){
 	this.size = {w: TILE/2, h: TILE};
-	this.loc = {x: (SIZE.tw-8)*TILE, y: (SIZE.th-2)*TILE-1};
+	this.loc = {x: (SIZE.tw-8)*TILE, y: (SIZE.th-2)*TILE};
 	this.vel    = { x: 0, y: 0};
 	this.left     = false;
 	this.right    = false;
@@ -531,8 +534,8 @@ function Player(){
 		return {...this.loc, ...this.size, 'holding': this.holding};
 	}
 
-	this.spawn = function(side){
-		if (side === "right") this.loc = { x: (SIZE.tw-2)*TILE, y: (SIZE.th-2)*TILE};
-		else if (side === "left") this.loc = { x: TILE, y: (SIZE.th-2)*TILE};
+	this.spawn = function(door){
+		if (door === "left") this.loc = { x: (SIZE.tw-2)*TILE, y: (SIZE.th-2)*TILE};
+		else if (door === "right") this.loc = { x: TILE, y: (SIZE.th-2)*TILE};
 	}
 }
