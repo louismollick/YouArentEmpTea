@@ -2,11 +2,10 @@
     const SIZE   = { tw: 19, th: 8};
     const TILE     = 10;
     const KEY      = { ESC: 27, R: 82, W: 87, A: 65, D: 68, E: 69, SPACE: 32, LEFT: 37, UP: 38, RIGHT: 39 };
-    const BLOCK_NAMES = { VOID: 0, DOOR_LEFT: 1, DOOR_RIGHT: 2, BEDROCK: 3,  PLATFORM: 4, NPC: 5, KEY: 6};
+    const BLOCK_NAMES = { VOID: 0, DOOR: 1, BEDROCK: 2,  PLATFORM: 3, NPC: 4, KEY: 5};
     const BLOCKS = [
         {id: BLOCK_NAMES.VOID},
-        {id: BLOCK_NAMES.DOOR_LEFT, color: 'blue'},
-        {id: BLOCK_NAMES.DOOR_RIGHT, color: 'red'},
+        {id: BLOCK_NAMES.DOOR_LEFT, color: 'white'},
         {id: BLOCK_NAMES.BEDROCK, color: 'black'},
         {id: BLOCK_NAMES.PLATFORM, color: 'black'},
         {id: BLOCK_NAMES.NPC, color: 'green', object: 1, message: 1},
@@ -30,9 +29,7 @@
 
     socket.on('print', function(data){console.log("printing... ", data);});
 
-    socket.on('game-npc-talk', function(message){
-        alert(message);
-    });
+    socket.on('game-npc-talk', function(message){alert(message);});
 
     socket.on('discord-login', function(data){
         console.log('Setting cookies...');
@@ -51,7 +48,7 @@
 
     socket.on('game-show-res',function(build){
         // Hide main menu and show game canvas
-        document.getElementById('main-menu').classList.add('d-none');
+        document.getElementById('menu').classList.add('d-none');
         document.getElementById('game').classList.remove('d-none');
 
         // If building own room, show build ui panel
@@ -59,22 +56,14 @@
         else document.getElementById('game-ui-build').classList.add('d-none');
     });
 
-    socket.on('game-leave-res', function(){
-        // Hide game canvas and show main menu
-        document.getElementById('main-menu').classList.remove('d-none');
-        document.getElementById('game').classList.add('d-none');
-    });
-
-    socket.on('update', function(pack){
-        render(ctx, pack);
-    });
+    socket.on('update', function(pack){render(ctx, pack);});
 
     //-------------------------------------------------------------------------
     // DOCUMENT EVENTS
     //-------------------------------------------------------------------------
     document.addEventListener("DOMContentLoaded", function() {
         // Add all placeable blocks to build panel
-        for(i=4; i<BLOCKS.length; i++){
+        for(i=BLOCK_NAMES.PLATFORM; i<BLOCKS.length; i++){
             let block = document.createElement('div');
             let b = BLOCKS[i];
 
@@ -93,13 +82,32 @@
             document.getElementById('game-ui-build-blocks').appendChild(block);
         }
     });
-    document.onclick = function(ev){
+    document.getElementById('menu-button-login').onclick = function(){socket.emit('discord-login');}
+    
+    document.getElementById('menu-button-main').onclick = function(){
+        socket.emit('game-leave');
+
+        // Hide game canvas and show main menu
+        document.getElementById('menu').classList.remove('d-none');
+        document.getElementById('menu-main').classList.remove('d-none');
+        document.getElementById('menu-play').classList.add('d-none');
+        document.getElementById('game').classList.add('d-none');
+    }
+    document.getElementById('menu-main-btn-build').onclick = function(){socket.emit('game-join-req');}
+    document.getElementById('menu-main-btn-play').onclick = function(){
+        document.getElementById('menu-main').classList.add('d-none');
+        document.getElementById('menu-play').classList.remove('d-none');
+    }
+    document.getElementById('menu-play').onclick = function(ev){
         // On join button click
         if (ev.target.classList.contains('join')){
             // Event propogation -- find lobbyid corresponding to join button pressed
-            let levelid = ev.target.parentNode.previousElementSibling.innerHTML;
-            socket.emit('game-join', levelid);
+            let levelname = ev.target.parentNode.previousElementSibling.innerHTML;
+            let authorid = ev.target.parentNode.previousElementSibling.previousElementSibling.innerHTML;
+            socket.emit('game-join-req', levelname, authorid);
         }
+    }
+    document.getElementById('game-ui').onclick = function(ev){
         // On build-ui block selection click
         if (ev.target.classList.contains('block')){
             // Get selected block info 
@@ -134,9 +142,6 @@
             ev.target.classList.add('selected');
         }
     }
-    document.getElementById('menu-button-login').onclick = function(){socket.emit('discord-login');}
-    document.getElementById('main-menu-btn-room').onclick = function(){socket.emit('game-join-req');}
-    document.getElementById('menu-button-main').onclick = function(){socket.emit('game-leave-req');}
     document.getElementById('game-ui-build-btn-save').onclick = function(){socket.emit('game-build-save');}
     document.addEventListener('keyup', function(ev) { keycontrols(ev,false);}, false);
     document.addEventListener("keydown", function (ev){ keycontrols(ev,true);}, false);
@@ -153,7 +158,7 @@
 
         // Get selected block id
         let b = JSON.parse(document.getElementsByClassName('selected')[0].dataset.json);
-        console.log(b, typeof b);
+
         // If selected block is an object-block, create object with user input
         if(BLOCKS[b].object){
             let blockinfo = BLOCKS[b];
@@ -210,6 +215,8 @@
                 }
                 ctx.fillStyle = 'pink';
                 ctx.fillRect(pack[i].x, pack[i].y, pack[i].w, pack[i].h);
+                ctx.fillStyle = 'red';
+                ctx.fillRect(pack[i].x, pack[i].y, 1, 1);
             }
         }
     }

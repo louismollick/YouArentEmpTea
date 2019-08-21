@@ -38,24 +38,49 @@
 			<a class="dropdown-item" id="menu-button-main">Return to main menu</a>
 		</div>
 	</div>
-	<div id="main-menu" class="h-100 row justify-content-center align-items-center" style="background-color:rgb(109, 209, 255);">
-		<img class="col-7" src="/client/cat.jpg">
-		<div class="col-4">
-			<button type="button" id="main-menu-btn-room" class="d-flex m-4 btn btn-primary btn-lg">YOUR TEA ROOM</button>
-			<button type="button" id="main-menu-btn-search" class="d-flex m-4 btn btn-primary btn-lg">FIND A TEA ROOM</button>
-			<button type="button" id="main-menu-btn-settings" class="d-flex m-4 btn btn-primary btn-lg">SETTINGS</button>
+	<div id="menu" class="h-100" style="background-color:rgb(109, 209, 255);">
+		<div id="menu-main" class="h-100">
+			<div class="h-100 d-flex flex-column justify-content-center align-items-center">
+				<img src="/client/cat.jpg" class="w-50">
+				<div class="d-flex flex-column">
+					<button type="button" id="menu-main-btn-build" class="m-4 btn btn-primary btn-lg">YOUR TEA ROOM</button>
+					<button type="button" id="menu-main-btn-play" class="m-4 btn btn-primary btn-lg">FIND A TEA ROOM</button>
+					<button type="button" id="menu-main-btn-settings" class="m-4 btn btn-primary btn-lg">SETTINGS</button>
+				</div>
+			</div>
+		</div>
+		<div id="menu-play" class="h-100 d-none">
+			<div class="h-100 d-flex flex-column justify-content-center align-items-center">
+				<h2>CAMPAIGN</h2>
+				<div id="menu-play-campaign-select">YEET</div>
+				<h2 class="mt-5">ONLINE</h2>
+				<table class="table table-striped" style="max-width: 750px">
+					<thead>
+						<tr>
+						<th>Name</th>
+						<th>Author</th>
+						<th>Reward</th>
+						<th></th>
+						</tr>
+					</thead>
+					<tbody id="menu-play-online-select"></tbody>
+				</table>
+			</div>
 		</div>
 	</div>
-	<div id="game" class="h-100 d-none d-flex flex-column">
-		<canvas id="game-canvas" class="m-auto"></canvas>
-		<div id="game-ui" class="flex-grow-1" style="background-color: blue;">
-			<div id="game-ui-build" >
-				<button type="button" id="game-ui-build-btn-save" class="btn btn-primary " style="bottom: 10px;">SAVE</button>
-				<div id="game-ui-build-panel" class="row">
-					<div id="game-ui-build-blocks" class="col"></div>
-					<div class="col">
-						<input id="game-ui-build-message" type="text" class="d-none my-3">
-						<select id="game-ui-build-types" class="d-none"></select>
+	
+	<div id="game" class="h-100 d-none">
+		<div class="h-100 d-flex flex-column">
+			<canvas id="game-canvas" class="m-auto"></canvas>
+			<div id="game-ui" class="flex-grow-1" style="background-color: blue;">
+				<div id="game-ui-build" >
+					<button type="button" id="game-ui-build-btn-save" class="btn btn-primary container-fluid" style="bottom: 10px;">SAVE</button>
+					<div id="game-ui-build-panel" class="row">
+						<div id="game-ui-build-blocks" class="col"></div>
+						<div class="col">
+							<input id="game-ui-build-message" type="text" class="d-none my-3">
+							<select id="game-ui-build-types" class="d-none"></select>
+						</div>
 					</div>
 				</div>
 			</div>
