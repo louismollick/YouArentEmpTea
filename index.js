@@ -10,18 +10,16 @@ const fetch = require('node-fetch');
 const url = require('url');
 const FormData = require('form-data');
 
-const mysql = require('mysql');
+const mysql = require('mysql2');
 
-const db = mysql.createConnection({
+const db = mysql.createPool({
 	host: "localhost",
 	user: "root",
 	password: "",
-	database : "youarentemptea"
-});
-
-db.connect(function(err) {
-	if (err) throw err;
-	console.log("MySql Connected!");
+	database : "youarentemptea",
+	waitForConnections: true,
+	connectionLimit: 10,
+	queueLimit: 0
 });
 
 const app = express();
@@ -69,7 +67,7 @@ async function getToken(socket, tokenKey, tokenType){
 
 async function login(socket, token){
 	console.log('');
-	console.log('>>> Logging in...')
+	console.log('>>> Logging in...');
 	try {
 		// Use token to get user info
 		const fetchinfo = await fetch('https://discordapp.com/api/users/@me', {
@@ -89,17 +87,43 @@ async function login(socket, token){
 			['locale', 'mfa_enabled', 'flags', 'token_type', 'expires_in', 'scope'].forEach(e => delete user[e]);
 
 			// Save to database, but if already there, only update what's necessary
-			let sql = `INSERT INTO users SET ? ON DUPLICATE KEY UPDATE username='${user.username}',avatar='${user.avatar}',discriminator='${user.discriminator}',access_token='${user.access_token}',refresh_token='${user.refresh_token}'`;
-			let query = db.query(sql, user, (err, result) => {
+			let sql = 'REPLACE INTO users SET ?';
+			let query = db.query(sql, {...user}, (err, result) => {
+				console.log(user);
 				if(err) throw err;
 				console.log(result);
 			});
+			
 			// Remove more unnecessary info
 			delete user['refresh_token'];
 
+			// Check if player has any maps, get id
+			let sql2 = 'SELECT id FROM maps WHERE authorid = ?';
+			db.query(sql2, user.id, (err, result) => {
+				if(err) throw err;
+				
+				// If new player with no maps (result[0] is undefined), insert new map (which generates a mapid)
+				if(!result[0]){
+					console.log('mapid is null, so creating new map...');
+
+					let sql3 = `INSERT INTO maps (name,authorid) VALUES ("${socket.user.username}'s Tea Room",?);`;
+					db.promise().query(sql3, user.id).then(() => {
+						// Now get the new mapid which was just created
+						let sql4 = 'SELECT id FROM maps WHERE authorid = ?';
+						db.query(sql4, user.id, (err, result) => {
+							if(err) throw err;
+							console.log('Sending NEW created mapid: ', result[0]['id']); // REEEEE
+							socket.emit('menu-insert-build-id', result[0]['id']);
+						});
+					});
+				} else{
+					console.log('Sending mapid : ', result[0]['id']);
+					socket.emit('menu-insert-build-id', result[0]['id']);
+				} 
+			});
 			// Send data to client, to save token to cookies
 			console.log("Sending info pack to client...");
-			socket.emit('discord-login', user);
+			socket.emit('menu-login', user);
 
 			// Save data to client-side socket, for quick access 
 			socket.user = user;
@@ -108,7 +132,6 @@ async function login(socket, token){
 		console.log(error);
 	}
 }
-
 //-------------------------------------------------------------------------
 // SOCKET STUFF
 //-------------------------------------------------------------------------
@@ -140,68 +163,150 @@ io.on('connection', function(socket){
 		let cookie_token = getCookie(cookie, 'token');
 		console.log('Cookie token: ', cookie_token);
 
-		// Access database and compare
-		let sql = `SELECT access_token, refresh_token FROM users WHERE id = ${cookie_id}`;
-		let query = db.query(sql, (err, result) => {
-			if(err) throw err;
-			console.log('Db token: ', result[0].access_token);
-			if (result[0].access_token == cookie_token){
-				// Try logging in with the current token (result[0] contains refresh 
-				// token as well, in case current token is expired).
-				console.log("Good cookie!")
-				login(socket, result[0]);
-			}
-			else console.log("Wrong cookie!");
-		});
+		if (cookie_token){
+			// Access database and compare
+			let sql = 'SELECT access_token, refresh_token FROM users WHERE id = ?';
+			db.query(sql, cookie_id, (err, result) => {
+				if(err) throw err;
+				if (result[0]){
+					console.log('Db token: ', result[0].access_token);
+					if (result[0].access_token == cookie_token){
+						// Try logging in with the current token (result[0] contains refresh 
+						// token as well, in case current token is expired).
+						console.log("Good cookie!")
+						login(socket, result[0]);
+					}
+					else console.log("Wrong cookie!");
+				} else console.log("Wrong cookie!");
+			});
+		} else console.log("Wrong cookie!");
 	}
 
-	socket.on('game-join-req', function(levelname, authorid){
+	socket.on('game-join-req', function(mapid){
 		// Check if socket is logged in, and isn't already in a level
 		if(socket.user && !Object.keys(socket.rooms)[0]){
 			let build = false;
 
-			// If no data, assume socket's room
-			if(!levelname || !authorid) {
-				build = true;
-				levelname = 'Default'; // REEEEEEEEEEEEE
-				authorid = socket.user.id;
-			}
-		
 			console.log('');
-			console.log(`>>> Displaying ${levelname} by ${authorid}...`);
-
-			// Join room corresponding to level id
-			let levelid = `${authorid}-${levelname}`;
-			socket.join(levelid);
+			console.log(`>>> Retrieving ${mapid}...`);
 
 			// Access database, get map
-			let sql = `SELECT json_extract(maps, '$.${levelname}') AS map FROM users WHERE id = ${authorid}`;
-			let query = db.query(sql, (err, result) => {
+			let sql = 'SELECT * FROM maps WHERE id = ?';
+			db.query(sql, mapid, (err, result) => {
 				if(err) throw err;
-
-				// If no game is ongoing in level, create it
-				if (!io.sockets.adapter.rooms[levelid].game){
+				// Verify that result is something
+				if(result[0]){
+					socket.join(socket.id);
+					// If authorid of map is same as socket id, player can edit map
+					if (result[0]['authorid'] == socket.user.id){
+						console.log('Build is active!');
+						build = true;
+					}
+					// Create new room session and create game
+					console.log('Creating session!');
 					socket.player = new Player();
-					console.log("Created Player??");
-					console.log(result);
-					io.sockets.adapter.rooms[levelid].game = new Game(build,levelname,authorid,JSON.parse(JSON.parse(result[0].map)));
-					console.log("Created game??");
+					io.sockets.adapter.rooms[socket.id].game = 
+						new Game(build,mapid,result[0].name,result[0].authorid,JSON.parse(result[0].secret),JSON.parse(result[0].data));
+
+					// Show client game view
+					socket.emit('game-show-res', build);
 				}
 			});
-
-			// Show client game view
-			socket.emit('game-show-res', build); // REEEEEEEEEEEEEE
-			
 		} else{ socket.emit('error', "There was an error joining that level.");}
 	});
 
 	socket.on('game-leave', function (){
 		let levelid = Object.keys(socket.rooms)[0];
-
 		// If socket is in level, leave
 		if(levelid){
 			socket.leave(levelid);
 			socket.player = null; // Delete player object
+		}
+	});
+	socket.on('menu-play-online-populate-req', function(){
+		let sql = 'SELECT maps.id,maps.name,maps.authorid,users.username,users.avatar FROM maps INNER JOIN users ON maps.authorid=users.id WHERE maps.isplayer = 1;';
+		db.query(sql, (err, result) => {
+			if(err) throw err;
+			console.log(result);
+			socket.emit('menu-play-online-populate-res', result);
+		});
+	});
+	socket.on('menu-play-campaign-populate-req', function(){
+		let sql = 'SELECT maps.id, maps.name, maps.authorid FROM maps WHERE isplayer = 0;';
+		db.query(sql, (err, result) => {
+			if(err) throw err;
+			console.log(result);
+			socket.emit('menu-play-campaign-populate-res', result);
+		});
+	});
+	socket.on('game-build-save', function(){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+			// If the map is being edited
+			if(game.build){
+				// Save to database
+				let sql = 'UPDATE maps SET data = ?,secret = ? WHERE id = ?';
+				db.query(sql, [JSON.stringify(game.map_data),JSON.stringify(game.secret),game.id], (err, result) => {
+					if(err) throw err;
+					console.log(result);
+				});
+			}
+		}
+	});
+	socket.on('game-build-room-change', function(data){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+			if (game.build && (data == 'left' || data == 'right')) game.roomChange(socket.player, data);
+		}
+	});
+	socket.on('game-edit-message', function(data){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+			// If the edited block holds a message, edit that messages
+			if(game.build && game.editing){
+				let b = game.getBlock(game.editing.x,game.editing.y);
+				if(b.hasOwnProperty('message')) b.message = data;
+			}
+		}
+	});
+	// DEALS WITH TYPES AND SECRET
+	socket.on('game-edit-type', function(data){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+			// If the edited block holds a type, edit that type
+			if(game.build && game.editing){
+				let b = game.getBlock(game.editing.x,game.editing.y);
+				if(b.hasOwnProperty('type')) b.type = data; // REEEE type check pls
+			}
+		}
+	});
+	socket.on('game-edit-secret', function(data){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
+			// If the edited block holds a type, edit that type
+			if(game.build && game.count) game.secret[game.count] = data;  // REEEE type check pls
+		}
+	});
+	socket.on('game-build-delete', function(){
+		let levelid = Object.keys(socket.rooms)[0];
+		// If player is in level (if !0)
+		if(levelid){
+			let game = io.sockets.adapter.rooms[levelid].game; // Pointer to game object
+			// If the game is in build mode and selected block can be removed, delete block
+			if(game.build && game.editing && game.getBlockInfo(game.editing.x,game.editing.y).remove){
+				game.map[tformula(game.editing.x,game.editing.y)] = BLOCK_NAMES.VOID;
+				game.editing = null;
+			} 
 		}
 	});
 
@@ -216,25 +321,44 @@ io.on('connection', function(socket){
 			if(data.inputId === 'left') player.left = data.state;
 			else if(data.inputId === 'right') player.right = data.state;
 			else if(data.inputId === 'up') player.up = data.state;
-			else if (data.inputId === 'interact' && data.state /*&& !game.build*/){
+			else if (data.inputId === 'interact' && data.state && !game.build){
 				let binfo = game.getBlockInfo(round_p2t(player.loc.x),round_p2t(player.loc.y));
 
 				// Place block (is the square void?)
 				if(player.holding && !binfo.id){
-					game.newBlock(round_p2t(player.loc.x),round_p2t(player.loc.y), player.holding);
+					console.log(player.holding);
+					game.placeBlock(round_p2t(player.loc.x),round_p2t(player.loc.y), player.holding);
 					player.holding = null;
 				}
 				// Pick up block
 				else if (!player.holding && binfo.pickup){
 					player.holding = game.getBlock(round_p2t(player.loc.x),round_p2t(player.loc.y));
-					game.newBlock(round_p2t(player.loc.x),round_p2t(player.loc.y), BLOCK_NAMES.VOID);
+					game.placeBlock(round_p2t(player.loc.x),round_p2t(player.loc.y), BLOCK_NAMES.VOID);
 				}
 				// Talk to NPC
 				else if (binfo.talk && !binfo.pickup){
 					let b = game.getBlock(round_p2t(player.loc.x),round_p2t(player.loc.y));
-					if(b.message != ""){
-						socket.emit('game-npc-talk', b.message);
-
+					let m = b.message;
+					let winflag = false;
+					if(b.id == BLOCK_NAMES.AUTHOR && player.holding){
+						if(player.holding.type == game.secret[game.count]){
+							game.secret[game.count] = null;
+							player.holding = null;
+							m = "AYAYA";
+							if(game.secret.every((val,i,arr) => val===arr[0])){
+								console.log('yeee');
+								winflag = true;
+							}
+						} else{
+							m = "NOT TODAY BOYO HEHE";
+						}
+					}
+					if(m != ""){
+						socket.emit('alert', m);
+						if(winflag){
+							game.win = true;
+							socket.emit('alert',"YOU WIN, go back to your home you stupid bitch");
+						} 
 						// Stop player input state
 						player.left = false;
 						player.right = false;
@@ -244,24 +368,8 @@ io.on('connection', function(socket){
 				}
 			}
 			// If socket is building a level and clicks on canvas, add block
-			else if (data.inputId === 'mouse' && game.build)
-				game.newBlock(floor_p2t(data.state.x), floor_p2t(data.state.y), data.state.b);
-		}
-	});
-
-	socket.on('game-build-save', function(){
-		let levelid = Object.keys(socket.rooms)[0];
-		// If player is in level (if !0)
-		if(levelid){
-			let game = io.sockets.adapter.rooms[levelid].game; // Assign by REFERENCE
-			// If the map is being edited
-			if(game.build){
-				// Save to database
-				let sql = `UPDATE users SET maps = json_replace(maps, '$.${game.mapname}',?) WHERE id = ${socket.user.id}`;
-				let query = db.query(sql, JSON.stringify(game.map_data), (err, result) => {
-					if(err) throw err;
-					console.log(result);
-				});
+			else if (data.inputId === 'mouse' && game.build){
+				game.onClick(floor_p2t(data.state.x), floor_p2t(data.state.y), data.state.b);
 			}
 		}
 	});
@@ -289,13 +397,20 @@ setInterval(function() {
 			let room = io.sockets.adapter.rooms[levelid];
 			
 			pack['map'] = room.game.map;
-			
+			if (room.game.build){
+				pack['edit'] = room.game.editing;
+				pack['count'] = room.game.count;
+				// packp['bg'] = room.game.
+				pack['secret'] = room.game.secret[room.game.count];
+			}
 			// For each socket id in room, update and get render pack
 			for (let i in room.sockets){
-				room.game.updatePlayer(dt, io.sockets.connected[i].player);
-				pack[i] = io.sockets.connected[i].player.getRenderPack();
+				let player = io.sockets.connected[i].player;
+				if (player){
+					room.game.updatePlayer(dt, player);
+					pack[i] = player.getRenderPack();
+				}
 			}
-
 			// Send render data to every player
 			io.in(levelid).emit('update', pack);
 		}
@@ -306,29 +421,19 @@ setInterval(function() {
 //-------------------------------------------------------------------------
 // CONSTANTS AND UTILITY FUNCTIONS
 //-------------------------------------------------------------------------
-/*
-	Key vairables:
-	id       [required] - an integer that corresponds with a tile in the data array.
-	edit	 [optional] - whether a builder can move/place/remove a block
-	solid    [optional] - whether the tile is solid or not, defaults to false.
-	bounce   [optional] - how much velocity is preserved upon hitting the tile, 0.5 is half.
-	jump     [optional] - whether the player can jump while over the tile, defaults to false.
-	gravity  [optional] - gravity of the tile, must have X and Y values (e.g {x:0.5, y:0.5}).
-	oncollision [optional] - refers to a script in the scripts section, executed if it is touched.
-	
-*/
-const BLOCK_NAMES = { VOID: 0, DOOR: 1, BEDROCK: 2,  PLATFORM: 3, NPC: 4, KEY: 5};
+const BLOCK_NAMES = { VOID: 0, DOOR: 1, BEDROCK: 2, AUTHOR:3, PLATFORM: 4, NPC: 5, KEY: 6};
 const BLOCK_INFO = [
-	{id: BLOCK_NAMES.VOID, solid:0},
+	{id: BLOCK_NAMES.VOID, solid:0, remove:1},
 	{id: BLOCK_NAMES.DOOR, solid:0},
-	{id: BLOCK_NAMES.BEDROCK, solid: 1, bounce: {x: 0,y: 0},},
-	{id: BLOCK_NAMES.PLATFORM, solid: 1, edit: 1, bounce: {x: 0,y: 0}},
-	{id: BLOCK_NAMES.NPC, solid: 0, edit: 1, talk: 1},
-	{id: BLOCK_NAMES.KEY, solid: 0, edit: 1, pickup: 1},
+	{id: BLOCK_NAMES.BEDROCK, solid: 1},
+	{id: BLOCK_NAMES.AUTHOR, solid: 0, edit:1, remove: 0, talk:1},
+	{id: BLOCK_NAMES.PLATFORM, solid: 1, edit:1, remove: 1},
+	{id: BLOCK_NAMES.NPC, solid: 0, edit:1, remove: 1, talk:1},
+	{id: BLOCK_NAMES.KEY, solid: 0, edit:1, remove: 1, pickup: 1},
 ];
 const BLANK_ROOM0 = [ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 ];
 const SIZE = {tw: 19, th: 8};
-const TILE     = 10;
+const TILE = 10;
 const LIMITS = {
 	x: 40,
 	y: 160,
@@ -340,28 +445,9 @@ const SPEEDS = {
 	right: 8,
 };
 
-function t2p(t){ return t*TILE;} // tile to point
 function floor_p2t(p){ return Math.floor(p/TILE);} // point to tile, for click
 function round_p2t(p){ return Math.round(p/TILE);} // point to tile, for block drop
 function tformula(tx,ty,tw=SIZE.tw){ return tx + (ty*tw)} // tile to array index
-
-function newMap(tw,th){
-	let map = [];
-	// SETUP MAP
-	for(let i = 0; i < tw*th; i++){
-		map[i] = BLOCK_NAMES.VOID;// all to 0
-	}
-	  // Walls
-	for(let i = 0; i< th*tw; i+=tw){
-		map[i] = BLOCK_NAMES.BEDROCK; // vertical
-		map[tw+i-1] = BLOCK_NAMES.BEDROCK;
-	}
-	for(let i = 0; i < tw; i++){
-		map[i] = BLOCK_NAMES.BEDROCK; // horizontal
-		map[tw*(th-1)+i] = BLOCK_NAMES.BEDROCK;
-	}
-	return map;
-}
 
 function getCookie(source, cname) {
 	var name = cname + "=";
@@ -382,18 +468,21 @@ function getCookie(source, cname) {
 //-------------------------------------------------------------------------
 
 // Game object holds information about instance of level : author, map, settings
-function Game(build,name,authorid,map){
+function Game(build,id,name,authorid,secret,map){
+	this.id = id;
 	this.build = build;
 	this.mapname = name;
 	this.authorid = authorid;
+	this.secret = secret;
 	this.map_data = map;
+
 	this.count = 0;
-	this.secret = [null, null, null, null];
 	this.win = false;
+	this.editing = null;
 
 	// Pointer to current room of map (editing this edits data). First room is blank, until player wins
 	if(!this.build) this.map = BLANK_ROOM0;
-	else this.map = this.map_data[this.count]; 
+	else this.map = this.map_data[this.count];
 
 	this.getBlock = function (tx,ty) {return this.map[tformula(tx,ty)];}
 	this.getBlockInfo = function(tx,ty){
@@ -401,26 +490,41 @@ function Game(build,name,authorid,map){
 		if (typeof t === 'object' && t !== null) return BLOCK_INFO[t.id];
 		return BLOCK_INFO[t];
 	}
-	this.newBlock = function(x,y,b){
+	this.onClick = function(x,y,b){
 		let tile = this.getBlockInfo(x,y);
 		
-		// If no block there, add block
-		if (!tile.id) this.map[tformula(x,y)] = b;
+		// If no block there, add block, or deselect
+		if (!tile.id) {
+			this.placeBlock(x,y,b);
+			this.editing = {x:x,y:y};
+		}
 		
-		// Otherwise check if deletable, then delete it
-		else if (tile.edit) this.map[tformula(x,y)] = BLOCK_NAMES.VOID;
+		// Otherwise check if editable, then select it. But deselect if already selected
+		else if (tile.edit){
+			if (this.editing && x == this.editing.x && y == this.editing.y) this.editing = null;
+			else this.editing = {x:x,y:y};
+		}
 	}
-
+	this.placeBlock = function(x,y,b){
+		let tile = this.getBlockInfo(x,y);
+		if(tile.remove) this.map[tformula(x,y)] = b;
+	}
+		
 	this.roomChange = function(player, dir){
-		// Get direction, change room count
-		if(dir == "left" && this.count) this.count--; 
-		else if(dir == "right" && this.count<4) this.count++;
+		if((this.count==0 && dir=="right") || 0<this.count<3 || (this.count==3 && dir=="left")){
+			// Get direction, change room count
+			if(dir == "left" && this.count) this.count--; 
+			else if(dir == "right" && this.count<3) this.count++;
 
-		// Update current map from map data -- if player hasnt won, make first room empty
-		if(this.count == 0 && !(this.build || this.win)) this.map = BLANK_ROOM0;
-		else this.map = this.map_data[this.count];
+			// Update current map from map data -- if player hasnt won, make first room empty
+			if(this.count == 0 && !(this.build || this.win)) this.map = BLANK_ROOM0;
+			else this.map = this.map_data[this.count];
 
-		player.spawn(dir); // Respawn character at door entrance
+			// Remove editing
+			this.editing = null;
+
+			player.spawn(dir); // Respawn character at door entrance
+		}
 	}
 
 	this.updatePlayer = function (dt, player){
@@ -535,7 +639,7 @@ function Player(){
 	}
 
 	this.spawn = function(door){
-		if (door === "left") this.loc = { x: (SIZE.tw-2)*TILE, y: (SIZE.th-2)*TILE};
-		else if (door === "right") this.loc = { x: TILE, y: (SIZE.th-2)*TILE};
+		if (door === "left") this.loc = { x: (SIZE.tw-1)*TILE-this.size.w-1, y: (SIZE.th-2)*TILE};
+		else if (door === "right") this.loc = { x: TILE+1, y: (SIZE.th-2)*TILE};
 	}
 }
