@@ -21,6 +21,23 @@
 			height: 30px;
 			width: 30px;
 		}
+		#game-ui-build-edit-preview{
+			height: 100px;
+			width: 100px;
+		}
+		.dropdown-menu{
+			color:white;
+			background: rgb(55, 55, 55);
+		}
+		.dropdown-item:hover{
+			background: rgb(64, 64, 64);
+		}
+		.dropdown-item:active{
+			background: rgb(39, 39, 39);
+		}
+		.selected{
+			border: 2px red dashed;
+		}
 	</style>
 	<!-- Font Awesome Icons -->
 	<script src="https://kit.fontawesome.com/6284778953.js"></script>
@@ -28,8 +45,8 @@
 	<title>You aren't Emp-tea!</title>
 </head>
 <body class="vh-100 overflow-hidden" style="background-color: gray">
-	<div id="menu-button" class="dropdown position-absolute mt-1 ml-1" style="z-index: 1">
-		<button class="btn btn-secondary px-1" style="border-radius:50%;" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+	<div id="menu-button" class="dropdown position-absolute mt-1 ml-1" style="z-index: 1;">
+		<button class="btn btn-secondary px-1" style="border:3px rgb(156, 156, 156) solid; border-radius:50%;" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 			<i class="fas fa-cog fa-lg mx-1"></i>
 		</button>
 		<div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
@@ -43,7 +60,7 @@
 			<div class="h-100 d-flex flex-column justify-content-center align-items-center">
 				<img src="/client/cat.jpg" class="w-50">
 				<div class="d-flex flex-column">
-					<button type="button" id="menu-main-btn-build" class="m-4 btn btn-primary btn-lg">YOUR TEA ROOM</button>
+					<button type="button" id="menu-main-btn-build" class="m-4 btn btn-primary btn-lg join">YOUR TEA ROOM</button>
 					<button type="button" id="menu-main-btn-play" class="m-4 btn btn-primary btn-lg">FIND A TEA ROOM</button>
 					<button type="button" id="menu-main-btn-settings" class="m-4 btn btn-primary btn-lg">SETTINGS</button>
 				</div>
@@ -52,7 +69,7 @@
 		<div id="menu-play" class="h-100 d-none">
 			<div class="h-100 d-flex flex-column justify-content-center align-items-center">
 				<h2>CAMPAIGN</h2>
-				<div id="menu-play-campaign-select">YEET</div>
+				<div id="menu-play-campaign"></div>
 				<h2 class="mt-5">ONLINE</h2>
 				<table class="table table-striped" style="max-width: 750px">
 					<thead>
@@ -60,26 +77,53 @@
 						<th>Name</th>
 						<th>Author</th>
 						<th>Reward</th>
-						<th></th>
+						<th class="p-1"><button type="button" id="menu-play-online-refresh-btn" class="btn btn-primary">Refresh</button></th>
 						</tr>
 					</thead>
-					<tbody id="menu-play-online-select"></tbody>
+					<tbody id="menu-play-online"></tbody>
 				</table>
 			</div>
 		</div>
 	</div>
-	
 	<div id="game" class="h-100 d-none">
 		<div class="h-100 d-flex flex-column">
-			<canvas id="game-canvas" class="m-auto"></canvas>
-			<div id="game-ui" class="flex-grow-1" style="background-color: blue;">
-				<div id="game-ui-build" >
-					<button type="button" id="game-ui-build-btn-save" class="btn btn-primary container-fluid" style="bottom: 10px;">SAVE</button>
-					<div id="game-ui-build-panel" class="row">
-						<div id="game-ui-build-blocks" class="col"></div>
-						<div class="col">
-							<input id="game-ui-build-message" type="text" class="d-none my-3">
-							<select id="game-ui-build-types" class="d-none"></select>
+			<canvas id="game-canvas"></canvas>
+			<div id="game-ui" class="flex-grow-1" style="color:white;background-color:rgb(55, 55, 55);">
+				<div id="game-ui-build">
+					<div class="d-flex">
+						<div id="game-ui-build-blocks" class="d-flex"></div>
+						<button type="button" id="game-ui-build-btn-save" class="flex-grow-1 btn btn-primary">SAVE</button>
+					</div>
+					<div class="d-flex flex-column flex-sm-row justify-content-center m-1">
+						<div id="game-ui-build-room" class="d-flex flex-column p-2 border">
+							<p>Room <span id="game-ui-build-title">0</span></p>
+							<div class="d-flex justify-content-between">
+								<button type="button" id="game-ui-build-left" class="btn btn-primary mr-1" disabled><</button>
+								<div>
+									<p class="mb-1">Background: </p>
+									<select id="game-ui-build-bg"></select>
+									<div>
+										<p class="mb-1">Secret key: </p>
+										<select id="game-ui-build-secret"></select>
+									</div>
+								</div>
+								<button type="button" id="game-ui-build-right" class="btn btn-primary ml-1">></button>
+							</div>
+						</div>
+						<div id="game-ui-build-edit" class="d-none ml-sm-2 p-2 border">
+							<div class="d-flex flex-column">
+								<p id="game-ui-build-edit-title">Edit Block</p>
+								<div class="d-flex">
+									<div id="game-ui-build-edit-preview"></div>
+									<div class="ml-3 d-flex flex-column">
+										<button type="button" id="game-ui-build-btn-delete" class="btn btn-primary">
+											<i class="fas fa-trash"></i>
+										</button>
+										<input id="game-ui-build-edit-message" type="text" class="d-none mt-3">
+										<select id="game-ui-build-edit-types" class="d-none mt-3"></select>
+									</div>
+								</div>
+							</div>
 						</div>
 					</div>
 				</div>
