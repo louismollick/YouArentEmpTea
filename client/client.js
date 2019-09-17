@@ -28,26 +28,23 @@
     // SOCKET EVENTS
     //-------------------------------------------------------------------------
 
-    socket.on('error', console.error);
     socket.on('print', function(data){console.log("printing... ", data);});
     socket.on('alert', function(message){alert(message);});
-    socket.on('menu-login', function(data){
-        console.log('Setting cookies...');
-        // Set cookies for next login
+    socket.on('login', function(data){
+        console.log(data);
+        console.log('Setting cookies for next login...');
         document.cookie = `id=${data.id};path=/`;
         document.cookie = `token=${data.access_token};path=/`;
 
         console.log('Displaying login info', data);
-        // Update page with login info
         document.getElementById('menu-button-login').href = "";
         document.getElementById('menu-button-login').classList.add('disabled');
         document.getElementById('menu-button-login').innerHTML = `Logged in as 
             <img style="width:30px;" class="rounded-circle" src="https://cdn.discordapp.com/avatars/${data.id}/${data.avatar}.png?size=128"/> 
             ${data.username}#${data.discriminator}`;
-    });
-    socket.on('menu-insert-build-id', function(data){
-        console.log('Setting build button mapid...');
-        document.getElementById('menu-main-btn-build').dataset.mapid = data;
+        
+        console.log(`Setting build button mapid ${data.mapid}...`);
+        document.getElementById('menu-main-btn-build').dataset.mapid = data.mapid;
     });
     socket.on('menu-play-online-populate-res', function(data){
         // Clear table
@@ -65,6 +62,7 @@
         });
     });
     socket.on('menu-play-campaign-populate-res', function(data){
+        console.log(data);
         // Create row, populate with data
         data.forEach(map => {
             let button = document.createElement('button');
@@ -122,7 +120,6 @@
 
         // Populate room selection
         socket.emit('menu-play-online-populate-req');
-        socket.emit('menu-play-campaign-populate-req');
     });
     document.getElementById('menu-button-login').onclick = function(){socket.emit('discord-login');}
     document.getElementById('menu-button-main').onclick = function(){
@@ -145,29 +142,32 @@
     document.getElementById('game-ui').onclick = function(ev){
         // On build-ui block selection click
         if (ev.target.classList.contains('block')){
-            // Remove selected from old selected
-            document.getElementsByClassName('selected')[0].classList.remove('selected');
-            // Make new block selected
-            ev.target.classList.add('selected');
+            document.getElementsByClassName('selected')[0].classList.remove('selected'); // Remove selected from old selected
+            ev.target.classList.add('selected'); // Make new block selected
         }
     }
+    // REEE maybe make the strings an enum-ish thing instead
     document.getElementById('game-ui-build-left').onclick = function(){
-        socket.emit('game-build-room-change','left');
+        socket.emit('game-edit','roomChange','left');
     }
     document.getElementById('game-ui-build-right').onclick = function(){
-        socket.emit('game-build-room-change','right');
+        socket.emit('game-edit','roomChange','right');
     }
     document.getElementById('game-ui-build-edit-message').onchange = function(){
-        socket.emit('game-edit-message', document.getElementById('game-ui-build-edit-message').value);
+        socket.emit('game-edit','message', document.getElementById('game-ui-build-edit-message').value);
     }
     document.getElementById('game-ui-build-edit-types').onchange = function(){
-        socket.emit('game-edit-type', document.getElementById('game-ui-build-edit-types').value);
+        socket.emit('game-edit',"type", document.getElementById('game-ui-build-edit-types').value);
     }
     document.getElementById('game-ui-build-secret').onchange = function(){
-        socket.emit('game-edit-secret', document.getElementById('game-ui-build-secret').value);
+        socket.emit('game-edit',"secret", document.getElementById('game-ui-build-secret').value);
     }
-    document.getElementById('game-ui-build-btn-save').onclick = function(){socket.emit('game-build-save');}
-    document.getElementById('game-ui-build-btn-delete').onclick = function(){socket.emit('game-build-delete');}
+    document.getElementById('game-ui-build-btn-save').onclick = function(){
+        socket.emit('game-edit',"save");
+    }
+    document.getElementById('game-ui-build-btn-delete').onclick = function(){
+        socket.emit('game-edit',"delete");
+    }
     document.addEventListener('keyup', function(ev) { keycontrols(ev,false);}, false);
     document.addEventListener("keydown", function (ev){ keycontrols(ev,true);}, false);
     document.addEventListener('keyup', function(ev) { keycontrols(ev,false);}, false);
@@ -187,8 +187,7 @@
         // If selected block is an object-block, create object with user input
         if(BLOCKS[b].object){
             let blockinfo = BLOCKS[b];
-            // Create object
-            b = {id: b};
+            b = {id: b}; // Create object
             if(blockinfo.message) b.message = '';
             if(blockinfo.types) b.type = blockinfo.types[0];
         }
@@ -216,12 +215,10 @@
                             if (typeof cell === "object") binfo = BLOCKS[cell.id];
                             else binfo = BLOCKS[cell];
 
-                            // Render with block color RREEEEEEEE make sprite
-                            ctx.fillStyle = binfo.color;
+                            ctx.fillStyle = binfo.color; // Render with block color RREEEEEEEE make sprite
                             ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
 
-                            // Type text REEEEE
-                            if(cell.type){
+                            if(cell.type){ // Type text REEEEE
                                 ctx.fillStyle = 'black';
                                 ctx.fillText(cell.type, x * TILE, y * TILE);
                             }
@@ -229,6 +226,7 @@
                     }
                 }
             }
+            else if (i == 'message' && pack[i] != '') alert(pack[i]);
             else if(i == 'count'){
                 let c = pack['count'];
                 let d = document.getElementById('game-ui-build-title');
