@@ -1,27 +1,26 @@
 {
-  "name": "youarentemptea",
+  "name": "yourenotemptea",
   "version": "1.0.0",
-  "description": "",
+  "description": "gamu",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \\\"Error: no test specified\\\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Ruiisuuu/YouArentEmpTea.git"
+    "url": "git+https://github.com/Ruiisuuu/YoureNotEmpTea.git"
   },
   "author": "Ruiisuuu",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/Ruiisuuu/YouArentEmpTea/issues"
+    "url": "https://github.com/Ruiisuuu/YoureNotEmpTea/issues"
   },
-  "homepage": "https://github.com/Ruiisuuu/YouArentEmpTea#readme",
+  "homepage": "https://github.com/Ruiisuuu/YoureNotEmpTea#readme",
   "dependencies": {
     "express": "^4.17.1",
-    "form-data": "^2.3.3",
-    "mysql2": "^1.6.5",
+    "form-data": "^3.0.0",
+    "mysql2": "^2.0.2",
     "node-fetch": "^2.6.0",
-    "nodemon": "^1.19.2",
-    "socket.io": "^2.2.0"
+    "socket.io": "^2.3.0"
   }
 }
